@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading.Tasks;
+using CoffemanBot.Common;
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Connector;
 
@@ -8,67 +9,88 @@ namespace CoffemanBot.Dialogs
     [Serializable]
     public class RootDialog : IDialog<object>
     {
-        private string name;
-        private int caps;
+        private bool userWelcomed;
 
-        public async Task StartAsync(IDialogContext context)
+        public Task StartAsync(IDialogContext context)
         {
+            int caps;
+            if (!context.UserData.TryGetValue(ContextConstants.TotalCaps, out caps))
+            {
+                caps = 0;
+                context.UserData.SetValue(ContextConstants.TotalCaps, caps);
+            }
+
             context.Wait(MessageReceivedAsync);
+            return Task.CompletedTask;
         }
 
         private async Task MessageReceivedAsync(IDialogContext context, IAwaitable<IMessageActivity> result)
         {
             var message = await result;
-            if (string.IsNullOrEmpty(name))
+
+            string userName;
+            if (!context.UserData.TryGetValue(ContextConstants.UserNameKey, out userName))
             {
-                await this.SendWelcomeMessageAsync(context);
+                PromptDialog.Text(
+                    context, 
+                    ResumeAfterUserNamePrompt, 
+                    "Друг, я тебя не знаю, как мне тебя называть??");
+                return;
+            }
+
+            int caps = context.UserData.GetValue<int>(ContextConstants.TotalCaps);
+
+            if (!userWelcomed)
+            {
+                userWelcomed = true;
+                await context.PostAsync($"С возвращением о {userName}!");
+                context.Wait(MessageReceivedAsync);
+                return;
+            }
+
+            int capNumberFromMessage;
+            if (Int32.TryParse(message.Text, out capNumberFromMessage))
+            {
+                if (capNumberFromMessage <= 0)
+                {
+                    await context.PostAsync($"Во во во {userName}! {DialogMessages.BadCapsNumber}");
+                }
+                else
+                {
+                    caps += capNumberFromMessage;
+                    context.UserData.SetValue(ContextConstants.TotalCaps, caps);
+                    await context.PostAsync($"{userName}{DialogMessages.CapsAdded}. Твой счет: {caps}");
+                }
+            }
+            else if (message.Text.Contains("счет"))
+            {
+                await context.PostAsync($"{userName}. Твой счет: {caps}");
             }
             else
             {
-                await SendHowManyCapsDrink(context);
+                await context.PostAsync(DialogMessages.TooManyAttemptsMessage);
             }
+
+            context.Wait(MessageReceivedAsync);
         }
 
-        private async Task SendHowManyCapsDrink(IDialogContext context)
+        private async Task ResumeAfterUserNamePrompt(IDialogContext context, IAwaitable<string> result)
         {
             try
             {
-                context.Call(new CapCountDialog(name), CapsCountDialogResumeAfter);
+                var userName = await result;
+                userWelcomed = true;
+
+                await context.PostAsync($"{userName} {DialogMessages.WelcomeMessage}");
+
+                context.UserData.SetValue(ContextConstants.UserNameKey, userName);
             }
             catch (TooManyAttemptsException)
             {
-                await context.PostAsync("Извиняюсь, но есть проблема понимания, попробуй позже");
-                await SendWelcomeMessageAsync(context);
+                await context.PostAsync(DialogMessages.TooManyAttemptsMessage);
             }
-        }
 
-        private async Task SendWelcomeMessageAsync(IDialogContext context)
-        {
-            await context.PostAsync("Привет друг, я Coffeman Bot, буду следить за тобой :)");
-            context.Call(new UserNameDialog(), UserNameDialogResumeAfter);
-        }
-
-        private async Task UserNameDialogResumeAfter(IDialogContext context, IAwaitable<string> result)
-        {
-            name = await result;
-            await SendHowManyCapsDrink(context);
-        }
-
-        private async Task CapsCountDialogResumeAfter(IDialogContext context, IAwaitable<int> result)
-        {
-            try
-            {
-                caps += await result;
-                await context.PostAsync($"{ name } всего выпил { caps } чашек кофе.");
-            }
-            catch (TooManyAttemptsException)
-            {
-                await context.PostAsync("Извиняюсь, но есть проблема понимания, попробуй позже");
-            }
-            finally
-            {
-                await SendHowManyCapsDrink(context);
-            }
+            context.Wait(this.MessageReceivedAsync);
         }
     }
 }

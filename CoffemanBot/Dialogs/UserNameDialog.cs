@@ -5,6 +5,7 @@ using Microsoft.Bot.Connector;
 
 namespace CoffemanBot.Dialogs
 {
+    [Obsolete]
     [Serializable]
     public class UserNameDialog : IDialog<string>
     {
